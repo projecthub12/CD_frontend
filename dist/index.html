@@ -1,12 +1,307 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Vite Vanilla JS App</title>
+  <meta charset="utf-8">
+  <title>Shapefile Uploader & Visualization</title>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    :root {
+      --bg-color:        #f8f9fa;  /* very light grey */
+      --card-bg:         #ffffff;  /* white */
+      --text-color:      #212529;  /* dark grey */
+      --accent-color:    #007bff;  /* bootstrap blue */
+      --border-color:    #dee2e6;  /* light border */
+      --button-bg:       #007bff;
+      --button-hover:    #0056b3;
+      --button-text:     #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+    }
+    .container {
+      max-width: 1100px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 2rem;
+      color: var(--accent-color);
+    }
+    .header p {
+      margin: 5px 0 0;
+      color: #495057;
+    }
+
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .uploader {
+      background-color: var(--card-bg);
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .uploader h2 {
+      margin: 0 0 15px;
+      font-size: 1.2rem;
+      color: var(--accent-color);
+    }
+
+    .file-input {
+      position: relative;
+      width: 100%;
+    }
+    .file-input input[type="file"] {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .file-input label {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 12px 0;
+      background-color: var(--button-bg);
+      color: var(--button-text);
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+      transition: background-color 0.2s ease;
+    }
+    .file-input label:hover {
+      background-color: var(--button-hover);
+    }
+
+    #map {
+      width: 100%;
+      height: 600px;
+      margin: 30px 0;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    #sendButton {
+      display: block;
+      margin: 0 auto 40px;
+      padding: 14px 36px;
+      font-size: 1rem;
+      font-weight: bold;
+      background-color: var(--button-bg);
+      color: var(--button-text);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+    #sendButton:hover {
+      background-color: var(--button-hover);
+    }
+  </style>
 </head>
 <body>
-  <h1>Hello, Vite!</h1>
-  <p>This is a simple HTML page with vanilla JavaScript.</p>
+
+  <div class="container">
+    <div class="header">
+      <h1>Shapefile Uploader & Map Visualization</h1>
+      <p>Upload your project boundary, infrastructure, and constraint shapefiles to display them on the map below.</p>
+    </div>
+
+    <div class="upload-grid">
+      <div class="uploader">
+        <h2>Project Boundary</h2>
+        <div class="file-input">
+          <input type="file" id="projectBoundary" accept=".zip" />
+          <label for="projectBoundary">Choose .zip Shapefile</label>
+        </div>
+      </div>
+      <div class="uploader">
+        <h2>Infrastructure</h2>
+        <div class="file-input">
+          <input type="file" id="infrastructure" accept=".zip" />
+          <label for="infrastructure">Choose .zip Shapefile</label>
+        </div>
+      </div>
+      <div class="uploader">
+        <h2>Constraints</h2>
+        <div class="file-input">
+          <input type="file" id="constraints" accept=".zip" />
+          <label for="constraints">Choose .zip Shapefile</label>
+        </div>
+      </div>
+    </div>
+
+    <div id="map"></div>
+    <button id="sendButton">Send to Backend</button>
+  </div>
+
+  <!-- Leaflet & shp.js -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+  <script>
+    // Initialize the map
+    const map = L.map('map').setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Layer control
+    let overlayLayers = {};
+    let layerControl = L.control.layers(null, overlayLayers).addTo(map);
+
+    // Helpers
+    function getRandomColor() {
+      return '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
+    }
+    function updateLayerControl() {
+      if (layerControl) map.removeControl(layerControl);
+      layerControl = L.control.layers(null, overlayLayers).addTo(map);
+    }
+    function updateMapBounds() {
+      const all = Object.values(overlayLayers)
+        .filter(l => l.getBounds && l.getBounds().isValid())
+        .map(l => l.getBounds());
+      if (all.length) {
+        let combined = all[0];
+        all.slice(1).forEach(b => combined.extend(b));
+        map.fitBounds(combined);
+      }
+    }
+    function removePolygonLayer(key) {
+      if (overlayLayers[key]) {
+        map.removeLayer(overlayLayers[key]);
+        delete overlayLayers[key];
+        updateLayerControl();
+      }
+    }
+
+    // Storage
+    const dictsend = new Map();
+    const dictconst = new Map();
+
+    // File processing
+    function processShapefile(file, label, color) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        shp(e.target.result).then(result => {
+          if (result.type && result.features) {
+            dictsend.set(label, result);
+            const layer = L.geoJSON(result, {
+              style: ()=>({ color }),
+              onEachFeature: (f, l)=>f.properties && l.bindPopup(JSON.stringify(f.properties))
+            });
+            overlayLayers[`${label} – ${file.name}`] = layer.addTo(map);
+          } else {
+            Object.entries(result).forEach(([key, geojson])=>{
+              const layer = L.geoJSON(geojson, {
+                style: ()=>({ color }),
+                onEachFeature: (f, l)=>f.properties && l.bindPopup(JSON.stringify(f.properties))
+              });
+              overlayLayers[`${label} – ${key}`] = layer.addTo(map);
+            });
+          }
+          updateLayerControl();
+          updateMapBounds();
+        }).catch(err => {
+          console.error(err);
+          alert(`Error processing ${file.name}. Make sure it’s a valid zipped shapefile.`);
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function processConstraintsFile(file) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        shp(e.target.result).then(result => {
+          function procFC(fc, name) {
+            fc.features.forEach((feat,i) => {
+              const key = `Constraint – ${name} – Poly ${i+1}`;
+              dictconst.set(key, feat);
+              const layer = L.geoJSON(feat, {
+                style: ()=>({ color: getRandomColor() }),
+                onEachFeature: (f, l) => {
+                  const props = f.properties ? JSON.stringify(f.properties.ConType) : '';
+                  l.bindPopup(`${props}<br/><button onclick="removePolygonLayer('${key}')">Remove</button>`);
+                }
+              });
+              overlayLayers[key] = layer.addTo(map);
+            });
+          }
+          if (result.type && result.features) {
+            procFC(result, file.name);
+          } else {
+            Object.entries(result).forEach(([k,fc])=>procFC(fc, k));
+          }
+          updateLayerControl();
+          updateMapBounds();
+        }).catch(err => {
+          console.error(err);
+          alert(`Error processing ${file.name}. Make sure it’s a valid zipped shapefile.`);
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // Wire up inputs
+    function setupFileInput(id, handler) {
+      const inp   = document.getElementById(id);
+      const label = inp.nextElementSibling;
+      inp.addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (file) {
+          label.textContent = file.name;
+          handler(file);
+        } else {
+          label.textContent = 'Choose .zip Shapefile';
+        }
+      });
+    }
+
+    setupFileInput('projectBoundary', file=>processShapefile(file, 'Project Boundary', 'red'));
+    setupFileInput('infrastructure', file=>processShapefile(file, 'Infrastructure', 'green'));
+    setupFileInput('constraints', file=>processConstraintsFile(file));
+
+    // Send to backend
+    document.getElementById('sendButton').addEventListener('click', ()=>{
+      const dict1 = Object.fromEntries(dictsend);
+      const dict2 = Object.fromEntries(dictconst);
+      fetch('http://34.41.238.191:5000/receive_dicts', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ dict1, dict2 })
+      })
+      .then(r=>r.json())
+      .then(d=>{
+        if (d.message) window.open('map.html','_blank');
+        else alert('Error processing GeoJSON');
+      })
+      .catch(err=>console.error(err));
+    });
+  </script>
 </body>
 </html>
