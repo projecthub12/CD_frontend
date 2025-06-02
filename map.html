@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GeoJSON Map with Layer Toggle & Selection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+
+  <style>
+    :root {
+      --bg-color:        #f1f3f5;
+      --sidebar-bg:      #ffffff;
+      --card-bg:         #ffffff;
+      --text-color:      #212529;
+      --accent-color:    #007bff;
+      --border-color:    #dee2e6;
+      --shadow:          0 1px 3px rgba(0,0,0,0.1);
+      --btn-bg:          #007bff;
+      --btn-hover:       #0056b3;
+      --btn-text:        #ffffff;
+      --btn-success-bg:  #28a745;
+      --btn-success-hover:#218838;
+      --btn-secondary-bg:#6c757d;
+      --btn-secondary-hover:#5a6268;
+      --input-bg:        #ffffff;
+      --input-border:    #ced4da;
+      --input-focus:     #80bdff;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--text-color);
+      background-color: var(--bg-color);
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 300px;
+      padding: 20px;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border-color);
+      overflow-y: auto;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+    }
+    #sidebar h3 {
+      margin-top: 0;
+      margin-bottom: 15px;
+      font-size: 1.25rem;
+      color: var(--accent-color);
+    }
+
+    /* Layer list */
+    #layerList .layer-item {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      padding: 10px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .layer-item label {
+      margin-left: 8px;
+      flex: 1;
+      font-size: 0.95rem;
+    }
+    .layer-controls .select-btn {
+      padding: 4px 8px;
+      font-size: 0.85rem;
+      border: 1px solid var(--accent-color);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--accent-color);
+      cursor: pointer;
+      transition: background-color 0.2s, color 0.2s;
+    }
+    .layer-controls .select-btn.selected {
+      background: var(--accent-color);
+      color: var(--btn-text);
+    }
+    .layer-controls .select-btn:hover {
+      background: var(--accent-color);
+      color: var(--btn-text);
+    }
+
+    /* Form inputs */
+    #sidebar label {
+      font-size: 0.9rem;
+      margin-top: 10px;
+    }
+    #sidebar input[type="number"] {
+      width: 100%;
+      padding: 6px 10px;
+      font-size: 0.95rem;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      background: var(--input-bg);
+      transition: border-color 0.2s;
+    }
+    #sidebar input[type="number"]:focus {
+      border-color: var(--input-focus);
+      outline: none;
+    }
+
+    /* Buttons */
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 12px;
+      transition: background-color 0.2s;
+    }
+    .btn-primary {
+      background: var(--btn-bg);
+      color: var(--btn-text);
+    }
+    .btn-primary:hover {
+      background: var(--btn-hover);
+    }
+    .btn-success {
+      background: var(--btn-success-bg);
+      color: var(--btn-text);
+    }
+    .btn-success:hover {
+      background: var(--btn-success-hover);
+    }
+    .btn-secondary {
+      background: var(--btn-secondary-bg);
+      color: var(--btn-text);
+    }
+    .btn-secondary:hover {
+      background: var(--btn-secondary-hover);
+    }
+
+    /* Map */
+    #map {
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <aside id="sidebar">
+    <h3>Toggle Layers</h3>
+    <div id="layerList"></div>
+
+    <!-- Parameters -->
+    <label for="numPoints">Number of Turbines</label>
+    <input type="number" id="numPoints" min="1" />
+
+    <label for="offset">Offset for Road</label>
+    <input type="number" id="offset" />
+
+    <label for="distance">Distance Between Turbines</label>
+    <input type="number" id="distance" />
+
+    <label for="divisibility">Number of Turbines in a String</label>
+    <input type="number" id="divisibility" min="1" />
+
+    <label for="capacity">Substation Capacity</label>
+    <input type="number" id="capacity" min="1" />
+
+    <!-- Action buttons -->
+    <button class="btn btn-primary" id="sendBtn">Send Selection for Turbine location</button>
+    <button class="btn btn-success" id="logBtn">Log Updated Data</button>
+    <button class="btn btn-secondary" id="nextPageBtn">Move to Next Page</button>
+  </aside>
+
+  <div id="map"></div>
+
+  <!-- Leaflet & app logic -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const selectedKeys = new Set();
+    let pointMarkers = [], superclusterMarkers = [];
+    let updatedPoints = [], updatedSuperclusters = [];
+    const clusterColors = {};
+    let map;
+
+    const getRandomColor = () =>
+      '#' + Math.floor(Math.random() * 16777215).toString(16);
+
+    // Load GeoJSON layers
+    fetch('http://34.41.238.191:5000/getgeojson')
+      .then(r => r.json())
+      .then(data => {
+        map = L.map('map').setView([-27.4, 114.3], 8);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        for (const key in data) {
+          const geo = typeof data[key] === 'string'
+            ? JSON.parse(data[key])
+            : data[key];
+          const layer = L.geoJSON(geo, {
+            style: { color: getRandomColor(), weight: 2, fillOpacity: 0.4 }
+          }).addTo(map);
+
+          // Sidebar entry
+          const item = document.createElement('div');
+          item.className = 'layer-item';
+
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = true;
+          checkbox.addEventListener('change', () =>
+            checkbox.checked ? layer.addTo(map) : map.removeLayer(layer)
+          );
+
+          const label = document.createElement('label');
+          label.textContent = `Section ${key}`;
+
+          const selectBtn = document.createElement('button');
+          selectBtn.className = 'select-btn';
+          selectBtn.textContent = 'Select';
+          selectBtn.addEventListener('click', () => {
+            if (selectedKeys.has(key)) {
+              selectedKeys.delete(key);
+              selectBtn.classList.remove('selected');
+            } else {
+              selectedKeys.add(key);
+              selectBtn.classList.add('selected');
+            }
+          });
+
+          const controls = document.createElement('div');
+          controls.className = 'layer-controls';
+          controls.appendChild(selectBtn);
+
+          item.append(checkbox, label, controls);
+          document.getElementById('layerList').appendChild(item);
+        }
+      })
+      .catch(err => {
+        console.error('Failed to load GeoJSON:', err);
+        alert('Could not load GeoJSON layers.');
+      });
+
+    // Helper to parse inputs
+    const getVal = id => parseInt(document.getElementById(id).value, 10);
+
+    // Send selection
+    document.getElementById('sendBtn').addEventListener('click', () => {
+      const numPoints    = getVal('numPoints'),
+            offset       = getVal('offset'),
+            distance     = getVal('distance'),
+            divisibility = getVal('divisibility'),
+            capacity     = getVal('capacity');
+
+      if ([numPoints, offset, distance, divisibility, capacity].some(v => isNaN(v) || v <= 0))
+        return alert('Please enter valid positive integers for all fields.');
+
+      if (numPoints % (divisibility * capacity) !== 0)
+        return alert(
+          `Number of points (${numPoints}) must be evenly divisible by ` +
+          `(divisibility × capacity = ${divisibility * capacity}).`
+        );
+
+      fetch('http://34.41.238.191:5000/submitselection', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          selected: Array.from(selectedKeys),
+          numPoints, offset, distance, divisibility, capacity
+        })
+      })
+      .then(r => r.json())
+      .then(renderResponse)
+      .catch(() => alert('Failed to send selection.'));
+    });
+
+    // Log updated data
+    document.getElementById('logBtn').addEventListener('click', () => {
+      fetch('http://34.41.238.191:5000/updatepointsinfo', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          points: updatedPoints,
+          numPoints: getVal('numPoints'),
+          offset:    getVal('offset'),
+          distance:  getVal('distance'),
+          divisibility: getVal('divisibility'),
+          capacity:  getVal('capacity')
+        })
+      })
+      .then(r => r.json())
+      .then(renderResponse)
+      .catch(() => alert('Failed to update points.'));
+    });
+
+    // Render response points & clusters
+    function renderResponse(response) {
+      alert(response.message || 'Selection received!');
+
+      // Clear old
+      pointMarkers.forEach(m => map.removeLayer(m));
+      superclusterMarkers.forEach(m => map.removeLayer(m));
+      pointMarkers = [];
+      superclusterMarkers = [];
+      updatedPoints = [];
+      updatedSuperclusters = [];
+
+      // Points
+      if (Array.isArray(response.points)) {
+        response.points.forEach((p, i) => {
+          updatedPoints.push({
+            x: p.x, y: p.y,
+            group: p.group,
+            clusterlabel: p.clusterlabel
+          });
+          const cl = p.clusterlabel;
+          if (!clusterColors[cl]) clusterColors[cl] = getRandomColor();
+          const color = clusterColors[cl];
+
+          const mk = L.marker([p.y, p.x], {
+            draggable: true,
+            icon: L.divIcon({
+              className: 'custom-div-icon',
+              html: `<div style="
+                width:10px; height:10px;
+                background:${color};
+                border-radius:50%;
+              "></div>`,
+              iconSize: [10,10],
+              iconAnchor: [5,5]
+            })
+          }).addTo(map);
+
+          mk.on('dragend', () => {
+            const {lat, lng} = mk.getLatLng();
+            updatedPoints[i] = { x: lng, y: lat, group: p.group, clusterlabel: p.clusterlabel };
+          });
+
+          pointMarkers.push(mk);
+        });
+      }
+
+      // Superclusters
+      const sc = response.supercluster || {};
+      Object.keys(sc).forEach(label => {
+        Object.keys(sc[label]).forEach(idx => {
+          const [lng, lat] = sc[label][idx];
+          updatedSuperclusters.push({
+            x: lng, y: lat,
+            superclusterlabel: label,
+            index: Number(idx)
+          });
+
+          const mk = L.marker([lat, lng], {
+            draggable: true,
+            icon: L.divIcon({
+              className: 'custom-div-icon',
+              html: `<div style="
+                width:12px; height:12px;
+                background:black;
+              "></div>`,
+              iconSize: [12,12],
+              iconAnchor: [6,6]
+            })
+          }).addTo(map);
+
+          mk.on('dragend', () => {
+            const {lat: newLat, lng: newLng} = mk.getLatLng();
+            const pos = superclusterMarkers.indexOf(mk);
+            updatedSuperclusters[pos] = {
+              x: newLng,
+              y: newLat,
+              superclusterlabel: label,
+              index: Number(idx)
+            };
+          });
+
+          superclusterMarkers.push(mk);
+        });
+      });
+    }
+
+    // Next page
+    document.getElementById('nextPageBtn').addEventListener('click', () => {
+      localStorage.setItem('updatedPoints', JSON.stringify(updatedPoints));
+      localStorage.setItem('updatedSuperclusters', JSON.stringify(updatedSuperclusters));
+      window.open('next.html', '_blank', 'noopener,noreferrer');
+    });
+  </script>
+</body>
+</html>

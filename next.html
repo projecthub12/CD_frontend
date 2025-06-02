@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Next Page Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Leaflet CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+  <style>
+    :root {
+      --bg-color:        #f1f3f5;
+      --sidebar-bg:      #ffffff;
+      --text-color:      #212529;
+      --accent-color:    #007bff;
+      --border-color:    #dee2e6;
+      --shadow:          0 1px 3px rgba(0,0,0,0.1);
+      --btn-bg:          #007bff;
+      --btn-hover:       #0056b3;
+      --btn-text:        #ffffff;
+      --btn-success-bg:  #28a745;
+      --btn-success-hover:#218838;
+      --btn-secondary-bg:#6c757d;
+      --btn-secondary-hover:#5a6268;
+      --input-bg:        #ffffff;
+      --input-border:    #ced4da;
+      --input-focus:     #80bdff;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      background-color: var(--bg-color);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--text-color);
+    }
+
+    /* Controls panel */
+    #controls {
+      width: 300px;
+      background: var(--sidebar-bg);
+      padding: 20px;
+      border-right: 1px solid var(--border-color);
+      box-shadow: var(--shadow);
+      overflow-y: auto;
+    }
+    #controls h3 {
+      margin-top: 0;
+      margin-bottom: 15px;
+      font-size: 1.25rem;
+      color: var(--accent-color);
+    }
+
+    .control-group {
+      margin-bottom: 15px;
+    }
+    .control-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 0.95rem;
+    }
+    .control-group input[type="number"] {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      background: var(--input-bg);
+      transition: border-color 0.2s;
+    }
+    .control-group input[type="number"]:focus {
+      border-color: var(--input-focus);
+      outline: none;
+    }
+
+    .toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+    .toggle-group label {
+      font-size: 0.95rem;
+    }
+
+    /* Buttons */
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      margin-bottom: 10px;
+    }
+    .btn-primary {
+      background: var(--btn-bg);
+      color: var(--btn-text);
+    }
+    .btn-primary:hover {
+      background: var(--btn-hover);
+    }
+    .btn-success {
+      background: var(--btn-success-bg);
+      color: var(--btn-text);
+    }
+    .btn-success:hover {
+      background: var(--btn-success-hover);
+    }
+    .btn-secondary {
+      background: var(--btn-secondary-bg);
+      color: var(--btn-text);
+    }
+    .btn-secondary:hover {
+      background: var(--btn-secondary-hover);
+    }
+
+    /* Map */
+    #map {
+      flex: 1;
+    }
+    #costDisplay {
+      margin-top: 10px;
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <aside id="controls">
+    <h3>Controls</h3>
+
+    <div class="control-group">
+      <label for="roadCostInput">Road cost per m</label>
+      <input type="number" id="roadCostInput" step="0.01" value="1.00" />
+    </div>
+
+    <div class="control-group">
+      <label for="wireCostInput">Wire cost per m</label>
+      <input type="number" id="wireCostInput" step="0.01" value="0.50" />
+    </div>
+
+    <div class="toggle-group">
+      <label>
+        <input type="checkbox" id="toggleRoad" checked />
+        Show Roads
+      </label>
+      <label>
+        <input type="checkbox" id="toggleWire" checked />
+        Show Wires
+      </label>
+    </div>
+
+    <button class="btn btn-secondary" id="editModeBtn">Activate Edit Mode</button>
+    <button class="btn btn-success" id="saveBtn">Save</button>
+    <button class="btn btn-primary" id="calcBtn">Calculate Cost</button>
+
+    <div id="costDisplay">
+      <div>Road: –</div>
+      <div>Wire: –</div>
+    </div>
+  </aside>
+
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // 1. Initialize the map
+      const map = L.map('map').setView([0, 0], 2);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+
+      // 2. Draw GeoJSON sections
+      fetch('http://34.41.238.191:5000/getgeojson')
+        .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
+        .then(data => {
+          const secLayers = [];
+          for (const key in data) {
+            const geo = typeof data[key] === 'string'
+                      ? JSON.parse(data[key]) : data[key];
+            secLayers.push(
+              L.geoJSON(geo, {
+                style: () => ({
+                  color: '#' + Math.floor(Math.random()*16777215).toString(16),
+                  weight: 2,
+                  fillOpacity: 0.4
+                })
+              })
+              .bindPopup(`Section ${key}`)
+              .addTo(map)
+            );
+          }
+          if (secLayers.length) {
+            map.fitBounds(L.featureGroup(secLayers).getBounds());
+          }
+        })
+        .catch(e => {
+          console.error(e);
+          alert('Could not load GeoJSON sections.');
+        });
+
+      // 3. State
+      let roadSegments = [], wireSegments = [];
+      const wireColors = ['blue','red','green','orange','purple','brown'];
+      let selectedMarker = null;
+      let editEnabled = false, currentEditType = null;
+
+      const roadLayerGroup = L.layerGroup().addTo(map);
+      const wireLayerGroup = L.layerGroup().addTo(map);
+
+      // 4. Draw segments
+      function drawAll() {
+        roadLayerGroup.clearLayers();
+        wireLayerGroup.clearLayers();
+
+        roadSegments.forEach((seg, idx) => {
+          const latlngs = seg.map(([lng,lat]) => [lat,lng]);
+          L.polyline(latlngs, { color:'black', weight:4, opacity:0.8 })
+            .addTo(roadLayerGroup);
+          latlngs.forEach((pt, pIdx) => {
+            const mk = L.circleMarker(pt, {
+              radius:5, color:'black', fillColor:'black', fillOpacity:0.9
+            }).addTo(roadLayerGroup);
+            mk.routeType = 'road';
+            mk.routeIndex = idx;
+            mk.pointIndex = pIdx;
+            mk.on('click', onMarkerClick);
+          });
+        });
+
+        wireSegments.forEach((seg, idx) => {
+          const latlngs = seg.map(([lng,lat]) => [lat,lng]);
+          const color = wireColors[idx % wireColors.length];
+          L.polyline(latlngs, { color, weight:4, opacity:0.8 })
+            .addTo(wireLayerGroup);
+          latlngs.forEach((pt, pIdx) => {
+            const mk = L.circleMarker(pt, {
+              radius:5, color, fillColor:color, fillOpacity:0.9
+            }).addTo(wireLayerGroup);
+            mk.routeType = 'wire';
+            mk.routeIndex = idx;
+            mk.pointIndex = pIdx;
+            mk.on('click', onMarkerClick);
+          });
+        });
+      }
+
+      // 5. Marker reconnect logic
+      function onMarkerClick(e) {
+        const mk2 = e.target;
+        if (!editEnabled || mk2.routeType !== currentEditType) return;
+
+        if (!selectedMarker) {
+          selectedMarker = mk2;
+          mk2.setStyle({ color:'yellow', fillColor:'yellow' });
+          return;
+        }
+        if (mk2 === selectedMarker) {
+          const orig = mk2.routeType === 'road'
+            ? 'black'
+            : wireColors[mk2.routeIndex % wireColors.length];
+          mk2.setStyle({ color:orig, fillColor:orig });
+          selectedMarker = null;
+          return;
+        }
+        if (mk2.pointIndex <= selectedMarker.pointIndex) {
+          alert('Select two points in forward order.');
+          const mk1 = selectedMarker;
+          const oc = mk1.routeType === 'road'
+            ? 'black'
+            : wireColors[mk1.routeIndex % wireColors.length];
+          mk1.setStyle({ color:oc, fillColor:oc });
+          selectedMarker = null;
+          return;
+        }
+
+        const arr = mk2.routeType === 'road' ? roadSegments : wireSegments;
+        const oldSeg = arr[mk2.routeIndex];
+        const i1 = selectedMarker.pointIndex;
+        const i2 = mk2.pointIndex;
+        const prefix = oldSeg.slice(0, i1+1);
+        const suffix = oldSeg.slice(i2);
+        const bypass = oldSeg.slice(i1+1, i2);
+        arr[mk2.routeIndex] = prefix.concat(suffix, bypass);
+
+        drawAll();
+        selectedMarker = null;
+      }
+
+      // 6. Fetch routes
+      Promise.all([
+        fetch('http://34.41.238.191:5000/getroadinfo', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+        }).then(r=>r.ok?r.json():Promise.reject(r.statusText)),
+        fetch('http://34.41.238.191:5000/getwireinfo', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+        }).then(r=>r.ok?r.json():Promise.reject(r.statusText))
+      ])
+      .then(([roadData, wireData]) => {
+        roadSegments = roadData.route;
+        wireSegments = wireData.route;
+        drawAll();
+        const fg = L.featureGroup([
+          ...roadLayerGroup.getLayers(),
+          ...wireLayerGroup.getLayers()
+        ]);
+        if (fg.getLayers().length) {
+          map.fitBounds(fg.getBounds(), { padding:[20,20] });
+        }
+      })
+      .catch(e => {
+        console.error(e);
+        alert('Could not load road/wire segments.');
+      });
+
+      // 7. UI controls
+
+      document.getElementById('toggleRoad').addEventListener('change', e => {
+        e.target.checked
+          ? map.addLayer(roadLayerGroup)
+          : map.removeLayer(roadLayerGroup);
+      });
+      document.getElementById('toggleWire').addEventListener('change', e => {
+        e.target.checked
+          ? map.addLayer(wireLayerGroup)
+          : map.removeLayer(wireLayerGroup);
+      });
+
+      const editBtn = document.getElementById('editModeBtn');
+      editBtn.addEventListener('click', () => {
+        if (!editEnabled) {
+          editEnabled = true;
+          currentEditType = 'road';
+          editBtn.textContent = 'Editing: Road';
+          editBtn.className = 'btn btn-secondary';
+          editBtn.style.background = 'green';
+        } else {
+          if (currentEditType === 'road') {
+            currentEditType = 'wire';
+            editBtn.textContent = 'Editing: Wire';
+            editBtn.style.background = 'blue';
+          } else {
+            currentEditType = 'road';
+            editBtn.textContent = 'Editing: Road';
+            editBtn.style.background = 'green';
+          }
+        }
+      });
+
+      document.getElementById('saveBtn').addEventListener('click', () => {
+        console.log('Final roadSegments:', roadSegments);
+        console.log('Final wireSegments:', wireSegments);
+        alert('Segments logged to console.');
+      });
+
+      document.getElementById('calcBtn').addEventListener('click', () => {
+        const roadCostP = parseFloat(document.getElementById('roadCostInput').value);
+        const wireCostP = parseFloat(document.getElementById('wireCostInput').value);
+        if (isNaN(roadCostP)||roadCostP<0||isNaN(wireCostP)||wireCostP<0) {
+          alert('Enter valid non‑negative costs.');
+          return;
+        }
+        let distRoad=0, distWire=0;
+        function accumulate(segs) {
+          return segs.reduce((acc, seg) => {
+            for (let i=0; i<seg.length-1; i++) {
+              const a = L.latLng(seg[i][1],seg[i][0]);
+              const b = L.latLng(seg[i+1][1],seg[i+1][0]);
+              acc += a.distanceTo(b);
+            }
+            return acc;
+          }, 0);
+        }
+        distRoad = accumulate(roadSegments);
+        distWire = accumulate(wireSegments);
+        const costRoad = distRoad * roadCostP;
+        const costWire = distWire * wireCostP;
+        document.getElementById('costDisplay').innerHTML = `
+          <div>Road: ${distRoad.toFixed(2)} m → $${costRoad.toFixed(2)}</div>
+          <div>Wire: ${distWire.toFixed(2)} m → $${costWire.toFixed(2)}</div>`;
+      });
+    });
+  </script>
+</body>
+</html>
